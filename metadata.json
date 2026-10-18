@@ -1,0 +1,8 @@
+{
+  "name": "Nutri-Guardian Pro final v10",
+  "description": "Clinical-grade nutritional audit tool with AI diagnostic label scanning and dynamic health budgeting.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
