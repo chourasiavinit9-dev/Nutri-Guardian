@@ -1,5 +1,16 @@
+# 🛡️ Nutri-Guardian Pro — Clinical-Grade Nutritional Safety & AI Triage Platform
+
 <div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+  <img src="./docs/images/homepage.png" alt="Nutri-Guardian Pro Dashboard" width="100%" style="border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.1);" />
+</div>
+
+<p align="center">
+  <b>Real-Time Clinical AI Decision Engine • Multi-Modal Food Label Auditing • Emergency Symptom Scribe</b>
+</p>
+
+<div align="center">
+  <img src="./docs/images/dark_mode.png" alt="Dark Mode Support" width="49%" style="border-radius: 8px;" />
+  <img src="./docs/images/clinical_scan.png" alt="Clinical Audit Results" width="49%" style="border-radius: 8px;" />
 </div>
 
 ---
@@ -138,4 +149,7 @@ bash start_z_engine.sh
 
 ---
 
-*View the app in AI Studio: https://ai.studio/apps/drive/157AjE50IzJmynnk-RehG_Nuj8NzcnGvZ*
+### 🏥 Clinical Symptoms & Lab Analysis
+<div align="center">
+  <img src="./docs/images/symptoms_triage.png" alt="Clinical Symptoms Scribe & Triage" width="80%" style="border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.08);" />
+</div>
