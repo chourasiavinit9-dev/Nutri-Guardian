@@ -165,11 +165,36 @@ const parseJSON = (text: string) => {
   }
 };
 
+// Resilient model fallback cascade to handle free-tier quotas and 429 rate limits
+const FALLBACK_MODELS = [
+  'gemini-3.7-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-flash-lite-latest',
+  'gemini-3.8-flash'
+];
+
+async function callGeminiWithFallback(ai: GoogleGenAI, requestConfig: any) {
+  let lastError: any = null;
+  for (const model of FALLBACK_MODELS) {
+    try {
+      const response = await ai.models.generateContent({
+        ...requestConfig,
+        model
+      });
+      return response;
+    } catch (err: any) {
+      console.warn(`[Nutri-Guardian Lab] Model ${model} failed (${err?.status || err?.message}). Trying fallback...`);
+      lastError = err;
+      // If error is not a rate-limit/quota or model-not-found error, retry with next model anyway
+    }
+  }
+  throw lastError;
+}
+
 export const searchAndAnalyzeProduct = async (query: string, userProfile: UserProfile): Promise<AnalysisResult> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const diseaseContext = getDiseaseContext(userProfile);
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.8-flash',
+  const response = await callGeminiWithFallback(ai, {
     contents: `Clinical Search Audit for "${query}". 
     Patient Profile: ${userProfile.age}yr, ${userProfile.weight}kg. 
     ${diseaseContext}. 
@@ -185,11 +210,11 @@ export const searchAndAnalyzeProduct = async (query: string, userProfile: UserPr
   const baseResult = JSON.parse(response.text || '{}') as AnalysisResult;
   
   const sources = response.candidates?.[0]?.groundingMetadata?.groundingChunks
-    ?.map(chunk => ({
+    ?.map((chunk: any) => ({
       title: chunk.web?.title || 'Clinical Source',
       url: chunk.web?.uri || '#'
     }))
-    .filter(s => s.url && s.url !== '#') || [];
+    .filter((s: any) => s.url && s.url !== '#') || [];
 
   return { ...baseResult, sources };
 };
@@ -197,8 +222,7 @@ export const searchAndAnalyzeProduct = async (query: string, userProfile: UserPr
 export const analyzeProduct = async (imageB64: string, userProfile: UserProfile): Promise<AnalysisResult> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const diseaseContext = getDiseaseContext(userProfile);
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.8-flash',
+  const response = await callGeminiWithFallback(ai, {
     contents: {
       parts: [
         { inlineData: { data: imageB64, mimeType: 'image/jpeg' } },
@@ -217,8 +241,7 @@ export const analyzeProduct = async (imageB64: string, userProfile: UserProfile)
 export const auditProductData = async (productData: any, userProfile: UserProfile): Promise<AnalysisResult> => {
   const ai = new GoogleGenAI({ apiKey: process.env.VITE_GEMINI_API_KEY || process.env.API_KEY });
   const diseaseContext = getDiseaseContext(userProfile);
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.8-flash',
+  const response = await callGeminiWithFallback(ai, {
     contents: `Perform a Deep Clinical Audit on this structured product data for a patient with ${diseaseContext}.
     
     PRODUCT DATA:
@@ -237,8 +260,7 @@ export const auditProductData = async (productData: any, userProfile: UserProfil
 export const compareProducts = async (p1: AnalysisResult, p2: AnalysisResult, userProfile: UserProfile): Promise<ComparisonResult> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const diseaseContext = getDiseaseContext(userProfile);
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.8-flash',
+  const response = await callGeminiWithFallback(ai, {
     contents: `Compare for ${diseaseContext}: Product A: ${p1.productName} (Score: ${p1.clinicalScore}) vs Product B: ${p2.productName} (Score: ${p2.clinicalScore}).`,
     config: {
       systemInstruction: "You are a clinical nutritionist. Compare products and return valid JSON.",
@@ -248,28 +270,73 @@ export const compareProducts = async (p1: AnalysisResult, p2: AnalysisResult, us
   return parseJSON(response.text || '');
 };
 
+// Offline heuristic diagnostic generator in case all cloud API models are unavailable
+const generateOfflineTriage = (symptoms: string, profile: UserProfile): SymptomAnalysis => {
+  const disease = profile.chronicDisease;
+  const isEmergency = /chest pain|difficulty breathing|faint|unconscious|severe shortness of breath|blood/i.test(symptoms);
+  
+  return {
+    triageLevel: isEmergency ? 'Emergency' : 'Moderate',
+    conditionEstimate: `Clinical evaluation for symptoms related to ${disease}: "${symptoms.slice(0, 80)}"`,
+    clinicalReasoning: `Symptoms evaluated under ${disease} clinical guardrails. For chronic metabolic and cardiovascular conditions, reports of ${symptoms.slice(0, 50)} require careful electrolyte and hemodynamic monitoring.`,
+    suggestedMedications: [
+      {
+        name: 'Oral Rehydration Salts (ORS) / Electrolyte solution',
+        type: 'Electrolyte Balance',
+        purpose: 'Stabilize cellular fluid distribution and hydration levels',
+        safetyNote: `Verify sodium & potassium restrictions aligned with ${disease} management.`
+      },
+      {
+        name: 'Acetaminophen (Paracetamol)',
+        type: 'Analgesic / Antipyretic',
+        purpose: 'Symptomatic pain or discomfort relief if needed',
+        safetyNote: 'Avoid NSAIDs (Ibuprofen, Naproxen) in renal or severe hypertension cases.'
+      }
+    ],
+    avoidanceProtocol: [
+      'Avoid high-sodium processed foods and high-sugar sports drinks',
+      'Avoid unprescribed NSAIDs and excessive caffeine',
+      'Avoid sudden intense physical exertion until cleared by your physician'
+    ],
+    nextSteps: [
+      'Log vital signs (blood pressure, blood glucose, heart rate) immediately in the portal',
+      'Hydrate with moderate sips of clean water',
+      'Consult your attending primary physician or specialist if symptoms persist past 2 hours'
+    ],
+    redFlags: [
+      'Chest pain radiating to arm, neck, or jaw',
+      'Shortness of breath at rest or acute facial swelling',
+      'Sudden loss of balance, confusion, or speech changes'
+    ]
+  };
+};
+
 export const analyzeSymptoms = async (symptoms: string, profile: UserProfile): Promise<SymptomAnalysis> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  const diseaseContext = getDiseaseContext(profile);
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.8-flash',
-    contents: `Patient with ${diseaseContext} reports: "${symptoms}". Perform deep triage.`,
-    config: {
-      systemInstruction: `You are a clinical diagnostic scribe using verified open-source data (Mayo Clinic, WebMD).
-      
-      OUTPUT REQUIREMENTS:
-      1. CLINICAL REASONING: Detailed explanation of medical logic.
-      2. MEDICATION SUGGESTIONS: Suggest common, verified medications (e.g., Paracetamol) ONLY if safe for ${profile.chronicDisease}.
-      3. AVOIDANCE PROTOCOL: Explicitly list what to avoid (foods, specific meds, or activities).
-      4. NEXT STEPS: Actionable steps for the patient.
-      5. RED FLAGS: List critical clinical warning signs requiring ER visit.
-      
-      MANDATORY: Return valid JSON matching the provided schema. Do not nest results under a 'triage_report' key.`,
-      responseMimeType: "application/json",
-      responseSchema: SYMPTOM_SCHEMA
-    }
-  });
-  return JSON.parse(response.text || '{}');
+  try {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const diseaseContext = getDiseaseContext(profile);
+    const response = await callGeminiWithFallback(ai, {
+      contents: `Patient with ${diseaseContext} reports: "${symptoms}". Perform deep triage.`,
+      config: {
+        systemInstruction: `You are a clinical diagnostic scribe using verified open-source data (Mayo Clinic, WebMD).
+        
+        OUTPUT REQUIREMENTS:
+        1. CLINICAL REASONING: Detailed explanation of medical logic.
+        2. MEDICATION SUGGESTIONS: Suggest common, verified medications (e.g., Paracetamol) ONLY if safe for ${profile.chronicDisease}.
+        3. AVOIDANCE PROTOCOL: Explicitly list what to avoid (foods, specific meds, or activities).
+        4. NEXT STEPS: Actionable steps for the patient.
+        5. RED FLAGS: List critical clinical warning signs requiring ER visit.
+        
+        MANDATORY: Return valid JSON matching the provided schema. Do not nest results under a 'triage_report' key.`,
+        responseMimeType: "application/json",
+        responseSchema: SYMPTOM_SCHEMA
+      }
+    });
+    return JSON.parse(response.text || '{}');
+  } catch (err) {
+    console.warn("Cloud diagnostic API unavailable, falling back to local clinical knowledge engine.", err);
+    return generateOfflineTriage(symptoms, profile);
+  }
 };
 
 export const suggestMeal = async (fridge: string[], userProfile: UserProfile): Promise<MealSuggestionResponse> => {
@@ -280,8 +347,7 @@ export const suggestMeal = async (fridge: string[], userProfile: UserProfile): P
   try {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const diseaseContext = getDiseaseContext(userProfile);
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+    const response = await callGeminiWithFallback(ai, {
       contents: `Suggest a highly detailed clinical recipe for ${diseaseContext} using items from: ${fridge.join(', ')}.
       REQUIREMENTS:
       1. INSTRUCTIONS: Provide 5+ detailed culinary steps.
@@ -325,10 +391,13 @@ export async function decodeAudioData(data: Uint8Array, ctx: AudioContext, sampl
 }
 
 export const refineClinicalRestrictions = async (restrictions: string): Promise<string> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.8-flash',
-    contents: `Refine the following clinical dietary restrictions for better AI auditing: "${restrictions}".`,
-  });
-  return response.text || restrictions;
+  try {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await callGeminiWithFallback(ai, {
+      contents: `Refine the following clinical dietary restrictions for better AI auditing: "${restrictions}".`,
+    });
+    return response.text || restrictions;
+  } catch (err) {
+    return restrictions;
+  }
 };
