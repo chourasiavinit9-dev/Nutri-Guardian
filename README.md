@@ -61,37 +61,53 @@ Standard consumer nutrition apps rely on remote, high-latency cloud APIs with un
 
 Nutri-Guardian Pro employs a multi-tiered, defense-in-depth AI/ML pipeline spanning real-time edge processing, vision intelligence, and clinical diagnostic reasoning:
 
+```mermaid
+flowchart TD
+    subgraph Inputs["1. Real-Time Inputs"]
+        A["📸 Food Packaging / Label<br/>(Camera / Barcode)"]
+        B["📡 Continuous Patient Telemetry<br/>(CGM, K+, eGFR via SSE)"]
+    end
+
+    subgraph Perception["2. Vision & Ingestion Layer"]
+        A --> C["👁️ Multi-Modal Vision AI<br/>(Grok-2-Vision / Gemini Flash)"]
+        C --> D["Structured Nutrients &<br/>Ingredient Matrix"]
+        B --> E["SSE Stream Buffer<br/>(/api/z-stream-vitals)"]
+    end
+
+    subgraph IBM_Z["3. IBM LinuxONE (s390x) Real-Time Decision Core (< 2ms)"]
+        D --> F{"Tier-1 Deterministic Guard<br/>(< 0.1ms)"}
+        E --> F
+        
+        F -- "Direct Contraindication Detected<br/>(e.g., Warfarin+VitK, CKD5+K+)" --> J["🚨 CRITICAL_INTERCEPT<br/>Automated Consumption Block"]
+        
+        F -- "No Fatal Collision" --> G["Tier-2 Ensemble ML Classifier<br/>(HistGradientBoosting + RandomForest)<br/>15k Training Records | 0.97+ ROC-AUC"]
+        
+        G --> H{"Risk Stratification<br/>(< 1.5ms)"}
+        H -- "Low Risk" --> I["✅ SAFE_CONTINUE<br/>Adherent to Thresholds"]
+        H -- "Moderate Spike" --> K["⚠️ WARN_TITRATE_DOSE<br/>Medication & Portion Titration"]
+        H -- "Severe Non-Linear Risk" --> J
+    end
+
+    subgraph Governance["4. Blockchain Audit & Diagnostics"]
+        I --> L["🔏 SHA-256 Decision Signature<br/>→ Algorand Blockchain Audit Trail"]
+        K --> L
+        J --> L
+        K --> M["🩺 Gemini 3.8 Flash<br/>Clinical Diagnostic Scribe & Guidance"]
+        J --> M
+    end
+
+    subgraph Client["5. Bento UI Experience"]
+        L --> N["📱 Nutri-Guardian Pro UI<br/>(React 19 + Tailwind Dark Mode + Voice TTS)"]
+        M --> N
+    end
+
+    style IBM_Z fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#f8fafc
+    style Inputs fill:#f8fafc,stroke:#94a3b8,stroke-width:1px,color:#0f172a
+    style Perception fill:#f0fdf4,stroke:#22c55e,stroke-width:1px,color:#14532d
+    style Governance fill:#fef2f2,stroke:#f87171,stroke-width:1px,color:#7f1d1d
+    style Client fill:#eff6ff,stroke:#60a5fa,stroke-width:1px,color:#1e3a8a
 ```
-[ Food Packaging / Label ]          [ Continuous Patient Telemetry ]
-           │                                      │
-           ▼ (Camera Frame)                       ▼ (SSE Stream: CGM, K+, eGFR)
-┌─────────────────────────────────┐   ┌─────────────────────────────────────────┐
-│     Multi-Modal Vision AI       │   │      IBM LinuxONE Real-Time Engine      │
-│  (Grok-2-Vision / Gemini Flash) │   │          (s390x Micro-Service)          │
-└────────────────┬────────────────┘   └───────────────────┬─────────────────────┘
-                 │ Extracted Nutrients                    │
-                 │ & Ingredient Matrix                    │
-                 └───────────────┬────────────────────────┘
-                                 │
-                                 ▼
-              ┌─────────────────────────────────────┐
-              │    Deterministic Safety Intercept   │  < 0.1ms (Zero Hallucination)
-              └──────────────────┬──────────────────┘
-                                 │
-                                 ▼
-              ┌─────────────────────────────────────┐
-              │  Ensemble ML Risk Classifier (s390x)│  < 1.5ms (HistGB + RF)
-              │    ROC-AUC: 0.97+ | 15k Records     │
-              └──────────────────┬──────────────────┘
-                                 │
-                   Critical Decision Output:
-     [ SAFE_CONTINUE | WARN_TITRATE_DOSE | CRITICAL_INTERCEPT ]
-                                 │
-                                 ▼
-              ┌─────────────────────────────────────┐
-              │  Gemini Clinical Diagnostic Scribe  │  Deep Triage & Optimization Tips
-              └─────────────────────────────────────┘
-```
+
 
 ### 1. Real-Time Biomarker ML Classifier (`s390x` Native Engine)
 - **Algorithm Architecture**: Ensemble of `HistGradientBoostingClassifier` and `RandomForestClassifier` optimized specifically for `s390x` compute architectures.
